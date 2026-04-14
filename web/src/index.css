@@ -757,6 +757,35 @@ html.dark .sbg-variant-green {
   z-index: -1;
 }
 
+.custom-title-font {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'PingFang SC', 'Helvetica Neue', 'Microsoft YaHei', sans-serif;
+  letter-spacing: 0.05em; /* 稍微增加字间距，让高级感出来 */
+  text-transform: uppercase;
+}
+
+.blur-ball-skyblue {
+  background: #0ea5e9; /* tailwind sky-500 */
+  top: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  opacity: 0.5;
+}
+
+.blur-ball-pink {
+  background: #ec4899; /* tailwind pink-500 */
+  top: 200px;
+  left: 30%;
+  opacity: 0.4;
+}
+
+html:not(.dark) .blur-ball-skyblue {
+  opacity: 0.25;
+}
+
+html:not(.dark) .blur-ball-pink {
+  opacity: 0.2;
+}
+
 .blur-ball-indigo {
   background: #6366f1;
   /* indigo-500 */
