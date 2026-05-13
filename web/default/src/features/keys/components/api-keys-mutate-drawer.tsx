@@ -1,3 +1,21 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
 import { useEffect, useState, type ReactNode } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -84,7 +102,7 @@ function ApiKeyFormSection(props: ApiKeyFormSectionProps) {
           <Icon className='size-4 sm:size-5' />
         </div>
         <div className='min-w-0'>
-          <h3 className='text-sm font-medium leading-none'>{props.title}</h3>
+          <h3 className='text-sm leading-none font-medium'>{props.title}</h3>
           <p className='text-muted-foreground mt-0.5 text-xs sm:mt-1'>
             {props.description}
           </p>
@@ -133,15 +151,7 @@ export function ApiKeysMutateDrawer({
       ratio: info.ratio,
     })
   )
-
-  // Add auto group if configured
-  if (!groups.some((g) => g.value === 'auto')) {
-    groups.unshift({
-      value: 'auto',
-      label: 'auto',
-      desc: t('Auto (Circuit Breaker)'),
-    })
-  }
+  const backendHasAuto = groups.some((g) => g.value === 'auto')
 
   const form = useForm<ApiKeyFormValues>({
     resolver: zodResolver(apiKeyFormSchema),
@@ -151,17 +161,28 @@ export function ApiKeysMutateDrawer({
   // Load existing data when updating
   useEffect(() => {
     if (open && isUpdate && currentRow) {
-      // For update, fetch fresh data
       getApiKey(currentRow.id).then((result) => {
         if (result.success && result.data) {
           form.reset(transformApiKeyToFormDefaults(result.data))
         }
       })
     } else if (open && !isUpdate) {
-      // For create, reset to defaults
-      form.reset(getApiKeyFormDefaultValues(defaultUseAutoGroup))
+      form.reset(getApiKeyFormDefaultValues(defaultUseAutoGroup && backendHasAuto))
     }
-  }, [open, isUpdate, currentRow, form, defaultUseAutoGroup])
+  }, [open, isUpdate, currentRow, form, defaultUseAutoGroup, backendHasAuto])
+
+  // Correct group after groups load: if the form value is not in available groups, fall back
+  useEffect(() => {
+    if (groups.length === 0) return
+    const currentGroup = form.getValues('group')
+    if (currentGroup && !groups.some((g) => g.value === currentGroup)) {
+      const fallback = groups.find((g) => g.value === 'default')?.value ?? groups[0]?.value ?? ''
+      form.setValue('group', fallback)
+      if (currentGroup === 'auto') {
+        form.setValue('cross_group_retry', false)
+      }
+    }
+  }, [groups, form])
 
   const onSubmit = async (data: ApiKeyFormValues) => {
     setIsSubmitting(true)
@@ -285,10 +306,7 @@ export function ApiKeysMutateDrawer({
                   <FormItem>
                     <FormLabel>{t('Name')}</FormLabel>
                     <FormControl>
-                      <Input
-                        {...field}
-                        placeholder={t('Enter a name')}
-                      />
+                      <Input {...field} placeholder={t('Enter a name')} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -492,29 +510,31 @@ export function ApiKeysMutateDrawer({
 
             <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
               <section className='bg-card rounded-lg border'>
-                <CollapsibleTrigger asChild>
-                  <button
-                    type='button'
-                    className='hover:bg-muted/50 flex w-full items-center gap-2.5 px-3 py-2.5 text-left transition-colors sm:gap-3 sm:px-4 sm:py-3'
-                  >
-                    <div className='bg-muted text-muted-foreground flex size-8 shrink-0 items-center justify-center rounded-lg border sm:size-10'>
-                      <Settings2 className='size-4 sm:size-5' />
-                    </div>
-                    <div className='min-w-0 flex-1'>
-                      <h3 className='text-sm font-medium leading-none'>
-                        {t('Advanced Settings')}
-                      </h3>
-                      <p className='text-muted-foreground mt-1 text-xs'>
-                        {t('Set API key access restrictions')}
-                      </p>
-                    </div>
-                    <ChevronDown
-                      className={cn(
-                        'text-muted-foreground size-4 shrink-0 transition-transform',
-                        advancedOpen && 'rotate-180'
-                      )}
+                <CollapsibleTrigger
+                  render={
+                    <button
+                      type='button'
+                      className='hover:bg-muted/50 flex w-full items-center gap-2.5 px-3 py-2.5 text-left transition-colors sm:gap-3 sm:px-4 sm:py-3'
                     />
-                  </button>
+                  }
+                >
+                  <div className='bg-muted text-muted-foreground flex size-8 shrink-0 items-center justify-center rounded-lg border sm:size-10'>
+                    <Settings2 className='size-4 sm:size-5' />
+                  </div>
+                  <div className='min-w-0 flex-1'>
+                    <h3 className='text-sm leading-none font-medium'>
+                      {t('Advanced Settings')}
+                    </h3>
+                    <p className='text-muted-foreground mt-1 text-xs'>
+                      {t('Set API key access restrictions')}
+                    </p>
+                  </div>
+                  <ChevronDown
+                    className={cn(
+                      'text-muted-foreground size-4 shrink-0 transition-transform',
+                      advancedOpen && 'rotate-180'
+                    )}
+                  />
                 </CollapsibleTrigger>
                 <CollapsibleContent>
                   <div className='space-y-3 border-t p-3 sm:space-y-4 sm:p-4'>
@@ -579,10 +599,10 @@ export function ApiKeysMutateDrawer({
           </form>
         </Form>
         <SheetFooter className='bg-background grid grid-cols-2 gap-2 border-t px-3 py-3 sm:flex sm:flex-row sm:justify-end sm:px-5 sm:py-4'>
-          <SheetClose asChild>
-            <Button variant='outline' className='w-full sm:w-auto'>
-              {t('Close')}
-            </Button>
+          <SheetClose
+            render={<Button variant='outline' className='w-full sm:w-auto' />}
+          >
+            {t('Close')}
           </SheetClose>
           <Button
             form='api-key-form'
