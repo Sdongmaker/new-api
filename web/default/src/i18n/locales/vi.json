@@ -4423,6 +4423,24 @@
     "Zero retention": "Không lưu dữ liệu",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "8-20 characters": "8-20 ký tự",
+    "Account ready. Opening top-up page.": "Tài khoản đã sẵn sàng. Đang mở trang nạp tiền.",
+    "CC Switch account connected": "Tài khoản CC Switch đã được kết nối",
+    "CC Switch sign-in failed": "Đăng nhập CC Switch thất bại",
+    "Claim link is invalid or expired.": "Liên kết nhận tài khoản không hợp lệ hoặc đã hết hạn.",
+    "Claim link is missing a ticket.": "Liên kết nhận tài khoản thiếu ticket.",
+    "Confirm Password": "Xác nhận mật khẩu",
+    "Continue to top-up": "Tiếp tục nạp tiền",
+    "Finish setting up your account": "Hoàn tất thiết lập tài khoản",
+    "Open the top-up page from CC Switch again to get a fresh link.": "Hãy mở lại trang nạp tiền từ CC Switch để lấy liên kết mới.",
+    "Password must be 8-20 characters long": "Mật khẩu phải dài 8-20 ký tự",
+    "Passwords don't match.": "Mật khẩu không khớp.",
+    "Please enter a username": "Vui lòng nhập tên người dùng",
+    "Set a username and password so you can sign in later.": "Đặt tên người dùng và mật khẩu để có thể đăng nhập sau này.",
+    "Signing in with CC Switch": "Đang đăng nhập bằng CC Switch",
+    "This signs you into the same account that CC Switch created for your API key.": "Thao tác này đăng nhập vào cùng tài khoản mà CC Switch đã tạo cho API Key của bạn.",
+    "Unable to continue": "Không thể tiếp tục",
+    "Username must be at most 20 characters long": "Tên người dùng tối đa 20 ký tự"
   }
 }

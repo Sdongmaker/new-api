@@ -4423,6 +4423,24 @@
     "Zero retention": "Zero retention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "8-20 characters": "8-20 characters",
+    "Account ready. Opening top-up page.": "Account ready. Opening top-up page.",
+    "CC Switch account connected": "CC Switch account connected",
+    "CC Switch sign-in failed": "CC Switch sign-in failed",
+    "Claim link is invalid or expired.": "Claim link is invalid or expired.",
+    "Claim link is missing a ticket.": "Claim link is missing a ticket.",
+    "Confirm Password": "Confirm Password",
+    "Continue to top-up": "Continue to top-up",
+    "Finish setting up your account": "Finish setting up your account",
+    "Open the top-up page from CC Switch again to get a fresh link.": "Open the top-up page from CC Switch again to get a fresh link.",
+    "Password must be 8-20 characters long": "Password must be 8-20 characters long",
+    "Passwords don't match.": "Passwords don't match.",
+    "Please enter a username": "Please enter a username",
+    "Set a username and password so you can sign in later.": "Set a username and password so you can sign in later.",
+    "Signing in with CC Switch": "Signing in with CC Switch",
+    "This signs you into the same account that CC Switch created for your API key.": "This signs you into the same account that CC Switch created for your API key.",
+    "Unable to continue": "Unable to continue",
+    "Username must be at most 20 characters long": "Username must be at most 20 characters long"
   }
 }

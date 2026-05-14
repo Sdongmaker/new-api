@@ -22,6 +22,8 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.POST("/setup", controller.PostSetup)
 		apiRouter.GET("/status", controller.GetStatus)
 		apiRouter.POST("/bootstrap/cc-switch", controller.CCSwitchBootstrap)
+		apiRouter.POST("/bootstrap/cc-switch/claim-link", controller.CCSwitchBootstrapClaimLink)
+		apiRouter.POST("/bootstrap/cc-switch/claim", controller.CCSwitchBootstrapClaim)
 		apiRouter.GET("/uptime/status", controller.GetUptimeKumaStatus)
 		apiRouter.GET("/models", middleware.UserAuth(), controller.DashboardListModels)
 		apiRouter.GET("/status/test", middleware.AdminAuth(), controller.TestStatus)

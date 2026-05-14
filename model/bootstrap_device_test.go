@@ -109,3 +109,47 @@ func TestBootstrapDeviceUniqueHashes(t *testing.T) {
 	}
 	require.Error(t, db.Create(duplicateFingerprint).Error)
 }
+
+func TestBootstrapClaimTicketAutoMigrateCreatesExpectedSchema(t *testing.T) {
+	db := openBootstrapDeviceTestDB(t)
+
+	require.NoError(t, db.AutoMigrate(&BootstrapClaimTicket{}))
+	require.True(t, db.Migrator().HasTable(&BootstrapClaimTicket{}))
+
+	for _, column := range []string{
+		"id",
+		"ticket_hash",
+		"user_id",
+		"device_id",
+		"redirect_path",
+		"expires_at",
+		"consumed_at",
+		"created_at",
+		"updated_at",
+	} {
+		require.True(t, db.Migrator().HasColumn(&BootstrapClaimTicket{}, column), "missing column %s", column)
+	}
+}
+
+func TestBootstrapClaimTicketUniqueHash(t *testing.T) {
+	db := openBootstrapDeviceTestDB(t)
+	require.NoError(t, db.AutoMigrate(&BootstrapClaimTicket{}))
+
+	first := &BootstrapClaimTicket{
+		TicketHash:   strings.Repeat("a", 64),
+		UserID:       1,
+		DeviceID:     1,
+		RedirectPath: "/console/topup",
+		ExpiresAt:    100,
+	}
+	require.NoError(t, db.Create(first).Error)
+
+	duplicate := &BootstrapClaimTicket{
+		TicketHash:   first.TicketHash,
+		UserID:       2,
+		DeviceID:     2,
+		RedirectPath: "/console/topup",
+		ExpiresAt:    100,
+	}
+	require.Error(t, db.Create(duplicate).Error)
+}

@@ -4423,6 +4423,24 @@
     "Zero retention": "零数据保留",
     "Zhipu": "智谱",
     "Zhipu V4": "智谱 V4",
-    "Zoom": "缩放"
+    "Zoom": "缩放",
+    "8-20 characters": "8-20 个字符",
+    "Account ready. Opening top-up page.": "账号已就绪，正在打开充值页。",
+    "CC Switch account connected": "CC Switch 账号已连接",
+    "CC Switch sign-in failed": "CC Switch 登录失败",
+    "Claim link is invalid or expired.": "认领链接无效或已过期。",
+    "Claim link is missing a ticket.": "认领链接缺少 ticket。",
+    "Confirm Password": "确认密码",
+    "Continue to top-up": "继续充值",
+    "Finish setting up your account": "完成账号设置",
+    "Open the top-up page from CC Switch again to get a fresh link.": "请从 CC Switch 重新打开充值页以获取新的链接。",
+    "Password must be 8-20 characters long": "密码长度必须为 8-20 个字符",
+    "Passwords don't match.": "两次输入的密码不一致。",
+    "Please enter a username": "请输入用户名",
+    "Set a username and password so you can sign in later.": "设置用户名和密码，之后即可直接登录。",
+    "Signing in with CC Switch": "正在使用 CC Switch 登录",
+    "This signs you into the same account that CC Switch created for your API key.": "这会登录到 CC Switch 为你的 API Key 创建的同一个账号。",
+    "Unable to continue": "无法继续",
+    "Username must be at most 20 characters long": "用户名最多 20 个字符"
   }
 }

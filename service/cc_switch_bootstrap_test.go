@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -46,7 +47,7 @@ func setupCCSwitchBootstrapServiceTest(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 	model.DB = db
 	model.LOG_DB = db
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Log{}, &model.BootstrapDevice{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Log{}, &model.BootstrapDevice{}, &model.BootstrapClaimTicket{}))
 
 	setCCSwitchBootstrapTestEnv(t, map[string]string{
 		"CC_SWITCH_BOOTSTRAP_ENABLED":                  "true",
@@ -98,9 +99,14 @@ func replaceCCSwitchBootstrapBodyField(body string, oldValue string, newValue st
 
 func signedCCSwitchBootstrapHeaders(t *testing.T, body string, nonce string) CCSwitchBootstrapHeaders {
 	t.Helper()
+	return signedCCSwitchBootstrapHeadersForPath(t, CCSwitchBootstrapPath, body, nonce)
+}
+
+func signedCCSwitchBootstrapHeadersForPath(t *testing.T, path string, body string, nonce string) CCSwitchBootstrapHeaders {
+	t.Helper()
 	timestamp := time.Now().Unix()
 	bodyHash := sha256.Sum256([]byte(body))
-	signingString := fmt.Sprintf("%s\n%s\n%d\n%s\n%s", http.MethodPost, CCSwitchBootstrapPath, timestamp, nonce, hex.EncodeToString(bodyHash[:]))
+	signingString := fmt.Sprintf("%s\n%s\n%d\n%s\n%s", http.MethodPost, path, timestamp, nonce, hex.EncodeToString(bodyHash[:]))
 	mac := hmac.New(sha256.New, []byte("test-secret"))
 	_, err := mac.Write([]byte(signingString))
 	require.NoError(t, err)
@@ -110,6 +116,157 @@ func signedCCSwitchBootstrapHeaders(t *testing.T, body string, nonce string) CCS
 		Nonce:     nonce,
 		Signature: hex.EncodeToString(mac.Sum(nil)),
 	}
+}
+
+func TestCCSwitchBootstrapClaimLinkCreatesConsumableTicket(t *testing.T) {
+	db := setupCCSwitchBootstrapServiceTest(t)
+
+	created, err := HandleCCSwitchBootstrap(context.Background(), CCSwitchBootstrapRequestContext{
+		Method:    http.MethodPost,
+		Path:      CCSwitchBootstrapPath,
+		Body:      []byte(ccSwitchBootstrapTestBody),
+		Headers:   signedCCSwitchBootstrapHeaders(t, ccSwitchBootstrapTestBody, "nonce-claim-bootstrap"),
+		ClientIP:  "203.0.113.10",
+		UserAgent: "cc-switch-test",
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, created.Provider.APIKey)
+
+	claimBody := strings.TrimSuffix(ccSwitchBootstrapTestBody, "}") + `,"redirect_path":"/console/topup?show_history=true"}`
+	result, err := HandleCCSwitchBootstrapClaimLink(context.Background(), CCSwitchBootstrapRequestContext{
+		Method:    http.MethodPost,
+		Path:      CCSwitchBootstrapClaimLinkPath,
+		Body:      []byte(claimBody),
+		Headers:   signedCCSwitchBootstrapHeadersForPath(t, CCSwitchBootstrapClaimLinkPath, claimBody, "nonce-claim-link"),
+		ClientIP:  "203.0.113.10",
+		UserAgent: "cc-switch-test",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "https://api.example.com/cc-switch/claim?redirect=%2Fconsole%2Ftopup%3Fshow_history%3Dtrue", result.ClaimURL[:strings.Index(result.ClaimURL, "&ticket=")])
+	require.Greater(t, result.ExpiresAt, common.GetTimestamp())
+
+	parsed, err := url.Parse(result.ClaimURL)
+	require.NoError(t, err)
+	ticket := parsed.Query().Get("ticket")
+	require.NotEmpty(t, ticket)
+
+	var stored model.BootstrapClaimTicket
+	require.NoError(t, db.First(&stored).Error)
+	require.NotEqual(t, ticket, stored.TicketHash)
+	require.Len(t, stored.TicketHash, 64)
+	require.Zero(t, stored.ConsumedAt)
+
+	claim, err := ConsumeCCSwitchBootstrapClaimTicket(ticket)
+	require.NoError(t, err)
+	require.Equal(t, stored.UserID, claim.User.Id)
+	require.Equal(t, "/console/topup?show_history=true", claim.RedirectPath)
+	require.True(t, claim.NeedsProfileSetup)
+
+	_, err = ConsumeCCSwitchBootstrapClaimTicket(ticket)
+	requireBootstrapStatus(t, err, http.StatusUnauthorized)
+}
+
+func TestCCSwitchBootstrapClaimLinkRejectsUnavailableDeviceOrUser(t *testing.T) {
+	db := setupCCSwitchBootstrapServiceTest(t)
+
+	_, err := HandleCCSwitchBootstrap(context.Background(), CCSwitchBootstrapRequestContext{
+		Method:    http.MethodPost,
+		Path:      CCSwitchBootstrapPath,
+		Body:      []byte(ccSwitchBootstrapTestBody),
+		Headers:   signedCCSwitchBootstrapHeaders(t, ccSwitchBootstrapTestBody, "nonce-claim-unavailable-bootstrap"),
+		ClientIP:  "203.0.113.10",
+		UserAgent: "cc-switch-test",
+	})
+	require.NoError(t, err)
+
+	claimBody := strings.TrimSuffix(ccSwitchBootstrapTestBody, "}") + `,"redirect_path":"/console/topup"}`
+	makeRequest := func(nonce string) error {
+		_, requestErr := HandleCCSwitchBootstrapClaimLink(context.Background(), CCSwitchBootstrapRequestContext{
+			Method:    http.MethodPost,
+			Path:      CCSwitchBootstrapClaimLinkPath,
+			Body:      []byte(claimBody),
+			Headers:   signedCCSwitchBootstrapHeadersForPath(t, CCSwitchBootstrapClaimLinkPath, claimBody, nonce),
+			ClientIP:  "203.0.113.10",
+			UserAgent: "cc-switch-test",
+		})
+		return requestErr
+	}
+
+	require.NoError(t, db.Model(&model.BootstrapDevice{}).Where("1 = 1").Update("status", model.BootstrapDeviceStatusBlocked).Error)
+	err = makeRequest("nonce-claim-blocked")
+	requireBootstrapStatus(t, err, http.StatusForbidden)
+
+	require.NoError(t, db.Model(&model.BootstrapDevice{}).Where("1 = 1").Update("status", model.BootstrapDeviceStatusActive).Error)
+	require.NoError(t, db.Model(&model.User{}).Where("1 = 1").Update("status", common.UserStatusDisabled).Error)
+	err = makeRequest("nonce-claim-disabled")
+	requireBootstrapStatus(t, err, http.StatusForbidden)
+
+	require.NoError(t, db.Model(&model.User{}).Where("1 = 1").Update("status", common.UserStatusEnabled).Error)
+	missingBody := replaceCCSwitchBootstrapBodyField(claimBody, "stable-device-fingerprint", "missing-device-fingerprint")
+	_, err = HandleCCSwitchBootstrapClaimLink(context.Background(), CCSwitchBootstrapRequestContext{
+		Method:    http.MethodPost,
+		Path:      CCSwitchBootstrapClaimLinkPath,
+		Body:      []byte(missingBody),
+		Headers:   signedCCSwitchBootstrapHeadersForPath(t, CCSwitchBootstrapClaimLinkPath, missingBody, "nonce-claim-missing"),
+		ClientIP:  "203.0.113.10",
+		UserAgent: "cc-switch-test",
+	})
+	requireBootstrapStatus(t, err, http.StatusConflict)
+}
+
+func TestCCSwitchBootstrapClaimTicketExpires(t *testing.T) {
+	db := setupCCSwitchBootstrapServiceTest(t)
+
+	ticket := "expired-ticket"
+	record := model.BootstrapClaimTicket{
+		TicketHash:   ccSwitchBootstrapHash("claim-ticket", ticket),
+		UserID:       1,
+		DeviceID:     1,
+		RedirectPath: "/console/topup",
+		ExpiresAt:    common.GetTimestamp() - 1,
+	}
+	require.NoError(t, db.Create(&record).Error)
+
+	_, err := ConsumeCCSwitchBootstrapClaimTicket(ticket)
+	requireBootstrapStatus(t, err, http.StatusUnauthorized)
+}
+
+func TestCCSwitchBootstrapClaimTicketDetectsCompletedProfile(t *testing.T) {
+	db := setupCCSwitchBootstrapServiceTest(t)
+
+	_, err := HandleCCSwitchBootstrap(context.Background(), CCSwitchBootstrapRequestContext{
+		Method:    http.MethodPost,
+		Path:      CCSwitchBootstrapPath,
+		Body:      []byte(ccSwitchBootstrapTestBody),
+		Headers:   signedCCSwitchBootstrapHeaders(t, ccSwitchBootstrapTestBody, "nonce-claim-complete-bootstrap"),
+		ClientIP:  "203.0.113.10",
+		UserAgent: "cc-switch-test",
+	})
+	require.NoError(t, err)
+	hashedPassword, err := common.Password2Hash("claimed-pass")
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&model.User{}).Where("1 = 1").Updates(map[string]any{
+		"username": "claimed-user",
+		"password": hashedPassword,
+	}).Error)
+
+	claimBody := strings.TrimSuffix(ccSwitchBootstrapTestBody, "}") + `,"redirect_path":"/console/topup"}`
+	result, err := HandleCCSwitchBootstrapClaimLink(context.Background(), CCSwitchBootstrapRequestContext{
+		Method:    http.MethodPost,
+		Path:      CCSwitchBootstrapClaimLinkPath,
+		Body:      []byte(claimBody),
+		Headers:   signedCCSwitchBootstrapHeadersForPath(t, CCSwitchBootstrapClaimLinkPath, claimBody, "nonce-claim-complete-link"),
+		ClientIP:  "203.0.113.10",
+		UserAgent: "cc-switch-test",
+	})
+	require.NoError(t, err)
+	parsed, err := url.Parse(result.ClaimURL)
+	require.NoError(t, err)
+
+	claim, err := ConsumeCCSwitchBootstrapClaimTicket(parsed.Query().Get("ticket"))
+	require.NoError(t, err)
+	require.False(t, claim.NeedsProfileSetup)
+	require.Empty(t, claim.User.Password)
 }
 
 func TestCCSwitchBootstrapCreatesUserTokenAndDevice(t *testing.T) {

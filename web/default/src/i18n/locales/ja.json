@@ -4423,6 +4423,24 @@
     "Zero retention": "データ保持なし",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V 4",
-    "Zoom": "ズーム"
+    "Zoom": "ズーム",
+    "8-20 characters": "8〜20文字",
+    "Account ready. Opening top-up page.": "アカウントの準備ができました。チャージページを開いています。",
+    "CC Switch account connected": "CC Switch アカウントが接続されました",
+    "CC Switch sign-in failed": "CC Switch のログインに失敗しました",
+    "Claim link is invalid or expired.": "認証リンクが無効か期限切れです。",
+    "Claim link is missing a ticket.": "認証リンクにチケットがありません。",
+    "Confirm Password": "パスワードを確認",
+    "Continue to top-up": "チャージへ進む",
+    "Finish setting up your account": "アカウント設定を完了",
+    "Open the top-up page from CC Switch again to get a fresh link.": "CC Switch からチャージページをもう一度開き、新しいリンクを取得してください。",
+    "Password must be 8-20 characters long": "パスワードは8〜20文字にしてください",
+    "Passwords don't match.": "パスワードが一致しません。",
+    "Please enter a username": "ユーザー名を入力してください",
+    "Set a username and password so you can sign in later.": "後でログインできるように、ユーザー名とパスワードを設定してください。",
+    "Signing in with CC Switch": "CC Switch でログイン中",
+    "This signs you into the same account that CC Switch created for your API key.": "CC Switch が API キー用に作成した同じアカウントにログインします。",
+    "Unable to continue": "続行できません",
+    "Username must be at most 20 characters long": "ユーザー名は20文字以内にしてください"
   }
 }

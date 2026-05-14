@@ -4423,6 +4423,24 @@
     "Zero retention": "Без хранения данных",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "8-20 characters": "8–20 символов",
+    "Account ready. Opening top-up page.": "Аккаунт готов. Открываем страницу пополнения.",
+    "CC Switch account connected": "Аккаунт CC Switch подключен",
+    "CC Switch sign-in failed": "Не удалось войти через CC Switch",
+    "Claim link is invalid or expired.": "Ссылка подтверждения недействительна или истекла.",
+    "Claim link is missing a ticket.": "В ссылке подтверждения нет ticket.",
+    "Confirm Password": "Подтвердите пароль",
+    "Continue to top-up": "Перейти к пополнению",
+    "Finish setting up your account": "Завершите настройку аккаунта",
+    "Open the top-up page from CC Switch again to get a fresh link.": "Снова откройте страницу пополнения из CC Switch, чтобы получить новую ссылку.",
+    "Password must be 8-20 characters long": "Пароль должен быть длиной 8–20 символов",
+    "Passwords don't match.": "Пароли не совпадают.",
+    "Please enter a username": "Введите имя пользователя",
+    "Set a username and password so you can sign in later.": "Задайте имя пользователя и пароль, чтобы входить позже.",
+    "Signing in with CC Switch": "Вход через CC Switch",
+    "This signs you into the same account that CC Switch created for your API key.": "Вы войдете в тот же аккаунт, который CC Switch создал для вашего API-ключа.",
+    "Unable to continue": "Невозможно продолжить",
+    "Username must be at most 20 characters long": "Имя пользователя должно быть не длиннее 20 символов"
   }
 }

@@ -39,6 +39,14 @@ services:
 #      - GOOGLE_ANALYTICS_ID=G-XXXXXXXXXX  # Google Analytics 的测量 ID (Google Analytics Measurement ID)
 #      - UMAMI_WEBSITE_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  # Umami 网站 ID (Umami Website ID)
 #      - UMAMI_SCRIPT_URL=https://analytics.umami.is/script.js  # Umami 脚本 URL，默认为官方地址 (Umami Script URL, defaults to official URL)
+#      - CC_SWITCH_BOOTSTRAP_ENABLED=true  # CC Switch 匿名 bootstrap；启用前必须替换下面的 secret 和 salt
+#      - CC_SWITCH_BOOTSTRAP_CLIENTS={"cc-switch-proprietary":"replace-with-client-secret"}  # 必须是合法 JSON；不要把 shell 外层单引号写进值里
+#      - CC_SWITCH_BOOTSTRAP_PROVIDER_BASE_URL=https://your-domain.com  # 返回给客户端的 NewAPI 地址，不要写成 'https://your-domain.com'
+#      - CC_SWITCH_BOOTSTRAP_SERVER_SALT=replace-with-long-random-salt  # 长期固定随机盐值，更换会影响重装恢复
+#      - CC_SWITCH_BOOTSTRAP_TOKEN_NAME=CC Switch
+#      - CC_SWITCH_BOOTSTRAP_SIGNATURE_WINDOW_SECONDS=300
+#      - CC_SWITCH_BOOTSTRAP_IP_LIMIT_PER_HOUR=20
+#      - CC_SWITCH_BOOTSTRAP_DEVICE_LIMIT_PER_HOUR=10
 
     depends_on:
       - redis

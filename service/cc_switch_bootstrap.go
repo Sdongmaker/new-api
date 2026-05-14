@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -16,17 +17,29 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/go-redis/redis/v8"
 	"gorm.io/gorm"
 )
 
 const (
-	CCSwitchBootstrapPath = "/api/bootstrap/cc-switch"
+	CCSwitchBootstrapPath          = "/api/bootstrap/cc-switch"
+	CCSwitchBootstrapClaimLinkPath = "/api/bootstrap/cc-switch/claim-link"
 
 	CCSwitchBootstrapActionCreated      = "created"
 	CCSwitchBootstrapActionResumed      = "resumed"
 	CCSwitchBootstrapActionRestored     = "restored"
 	CCSwitchBootstrapActionTokenRotated = "token_rotated"
+
+	ccSwitchBootstrapClaimTicketTTLSeconds = 600
 )
+
+const ccSwitchBootstrapClaimTicketConsumeScript = `
+local value = redis.call("GET", KEYS[1])
+if value then
+  redis.call("DEL", KEYS[1])
+end
+return value
+`
 
 type CCSwitchBootstrapHeaders struct {
 	ClientID  string
@@ -53,6 +66,11 @@ type CCSwitchBootstrapRequest struct {
 	BuildChannel      string `json:"build_channel"`
 }
 
+type CCSwitchBootstrapClaimLinkRequest struct {
+	CCSwitchBootstrapRequest
+	RedirectPath string `json:"redirect_path"`
+}
+
 type CCSwitchBootstrapResult struct {
 	Action    string                    `json:"action"`
 	Provider  CCSwitchBootstrapProvider `json:"provider"`
@@ -65,6 +83,24 @@ type CCSwitchBootstrapProvider struct {
 	BaseURL string         `json:"base_url"`
 	APIKey  string         `json:"api_key"`
 	Models  map[string]any `json:"models"`
+}
+
+type CCSwitchBootstrapClaimLinkResult struct {
+	ClaimURL  string `json:"claim_url"`
+	ExpiresAt int64  `json:"expires_at"`
+}
+
+type CCSwitchBootstrapClaimResult struct {
+	User              model.User `json:"user"`
+	RedirectPath      string     `json:"redirect_path"`
+	NeedsProfileSetup bool       `json:"needs_profile_setup"`
+}
+
+type ccSwitchBootstrapClaimTicketPayload struct {
+	UserID       int    `json:"user_id"`
+	DeviceID     int    `json:"device_id"`
+	RedirectPath string `json:"redirect_path"`
+	ExpiresAt    int64  `json:"expires_at"`
 }
 
 type CCSwitchBootstrapError struct {
@@ -120,6 +156,52 @@ func HandleCCSwitchBootstrap(ctx context.Context, reqCtx CCSwitchBootstrapReques
 	}
 
 	return resolveCCSwitchBootstrapDevice(cfg, reqCtx, req, installHash, fingerprintHash)
+}
+
+func HandleCCSwitchBootstrapClaimLink(ctx context.Context, reqCtx CCSwitchBootstrapRequestContext) (*CCSwitchBootstrapClaimLinkResult, error) {
+	cfg, err := loadCCSwitchBootstrapConfig()
+	if err != nil {
+		return nil, err
+	}
+	if !cfg.Enabled {
+		return nil, bootstrapHTTPError(http.StatusForbidden, "bootstrap disabled")
+	}
+	if err := verifyCCSwitchBootstrapSignature(ctx, cfg, reqCtx); err != nil {
+		return nil, err
+	}
+
+	var req CCSwitchBootstrapClaimLinkRequest
+	if err := common.Unmarshal(reqCtx.Body, &req); err != nil {
+		return nil, bootstrapHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	if err := validateCCSwitchBootstrapRequest(req.CCSwitchBootstrapRequest); err != nil {
+		return nil, err
+	}
+	redirectPath := normalizeCCSwitchClaimRedirectPath(req.RedirectPath)
+
+	installHash := ccSwitchBootstrapHash(cfg.ServerSalt, req.InstallID)
+	fingerprintHash := ccSwitchBootstrapHash(cfg.ServerSalt, req.DeviceFingerprint)
+	if err := checkCCSwitchBootstrapRateLimit(cfg, reqCtx.ClientIP, fingerprintHash); err != nil {
+		return nil, err
+	}
+
+	device, err := findCCSwitchBootstrapDeviceForClaim(installHash, fingerprintHash)
+	if err != nil {
+		return nil, err
+	}
+	user, err := validateCCSwitchBootstrapClaimUser(device)
+	if err != nil {
+		return nil, err
+	}
+	ticket, expiresAt, err := createCCSwitchBootstrapClaimTicket(ctx, user.Id, device.ID, redirectPath)
+	if err != nil {
+		return nil, err
+	}
+	claimURL := buildCCSwitchBootstrapClaimURL(cfg.ProviderBaseURL, redirectPath, ticket)
+	return &CCSwitchBootstrapClaimLinkResult{
+		ClaimURL:  claimURL,
+		ExpiresAt: expiresAt,
+	}, nil
 }
 
 func loadCCSwitchBootstrapConfig() (*ccSwitchBootstrapConfig, error) {
@@ -272,6 +354,55 @@ func resolveCCSwitchBootstrapDevice(cfg *ccSwitchBootstrapConfig, reqCtx CCSwitc
 	return nil, errDatabase(err)
 }
 
+func findCCSwitchBootstrapDeviceForClaim(installHash string, fingerprintHash string) (*model.BootstrapDevice, error) {
+	var byInstall model.BootstrapDevice
+	installErr := model.DB.Where("install_id_hash = ?", installHash).First(&byInstall).Error
+	var byFingerprint model.BootstrapDevice
+	fingerprintErr := model.DB.Where("device_fingerprint_hash = ?", fingerprintHash).First(&byFingerprint).Error
+
+	installFound := installErr == nil
+	fingerprintFound := fingerprintErr == nil
+	if installErr != nil && !errors.Is(installErr, gorm.ErrRecordNotFound) {
+		return nil, errDatabase(installErr)
+	}
+	if fingerprintErr != nil && !errors.Is(fingerprintErr, gorm.ErrRecordNotFound) {
+		return nil, errDatabase(fingerprintErr)
+	}
+	if !installFound && !fingerprintFound {
+		return nil, bootstrapHTTPError(http.StatusNotFound, "bootstrap device not found")
+	}
+	if installFound && fingerprintFound && byInstall.ID != byFingerprint.ID {
+		_ = markBootstrapRisk(&byInstall, "hash_conflict")
+		_ = markBootstrapRisk(&byFingerprint, "hash_conflict")
+		return nil, bootstrapHTTPError(http.StatusConflict, "bootstrap device conflict")
+	}
+	if installFound && !fingerprintFound {
+		_ = markBootstrapRisk(&byInstall, "fingerprint_changed")
+		return nil, bootstrapHTTPError(http.StatusConflict, "bootstrap device conflict")
+	}
+	if installFound {
+		return &byInstall, nil
+	}
+	return &byFingerprint, nil
+}
+
+func validateCCSwitchBootstrapClaimUser(device *model.BootstrapDevice) (*model.User, error) {
+	if device.Status == model.BootstrapDeviceStatusBlocked {
+		return nil, bootstrapHTTPError(http.StatusForbidden, "bootstrap device blocked")
+	}
+	var user model.User
+	if err := model.DB.First(&user, device.UserID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, bootstrapHTTPError(http.StatusForbidden, "bootstrap user unavailable")
+		}
+		return nil, errDatabase(err)
+	}
+	if user.Status != common.UserStatusEnabled {
+		return nil, bootstrapHTTPError(http.StatusForbidden, "bootstrap user disabled")
+	}
+	return &user, nil
+}
+
 func createCCSwitchBootstrapDevice(cfg *ccSwitchBootstrapConfig, reqCtx CCSwitchBootstrapRequestContext, req CCSwitchBootstrapRequest, installHash string, fingerprintHash string) (*CCSwitchBootstrapResult, error) {
 	now := common.GetTimestamp()
 	user := &model.User{
@@ -419,6 +550,181 @@ func buildCCSwitchBootstrapResult(cfg *ccSwitchBootstrapConfig, action string, t
 		},
 		ExpiresAt: 0,
 	}
+}
+
+func createCCSwitchBootstrapClaimTicket(ctx context.Context, userID int, deviceID int, redirectPath string) (string, int64, error) {
+	ticket, err := common.GenerateRandomCharsKey(48)
+	if err != nil {
+		return "", 0, errDatabase(err)
+	}
+	now := common.GetTimestamp()
+	expiresAt := now + ccSwitchBootstrapClaimTicketTTLSeconds
+	ticketHash := ccSwitchBootstrapHash("claim-ticket", ticket)
+	payload := ccSwitchBootstrapClaimTicketPayload{
+		UserID:       userID,
+		DeviceID:     deviceID,
+		RedirectPath: redirectPath,
+		ExpiresAt:    expiresAt,
+	}
+	if common.RedisEnabled && common.RDB != nil {
+		encoded, err := common.Marshal(payload)
+		if err != nil {
+			return "", 0, errDatabase(err)
+		}
+		ok, err := common.RDB.SetNX(
+			ctx,
+			ccSwitchBootstrapClaimTicketRedisKey(ticketHash),
+			string(encoded),
+			time.Duration(ccSwitchBootstrapClaimTicketTTLSeconds)*time.Second,
+		).Result()
+		if err != nil {
+			return "", 0, errDatabase(err)
+		}
+		if !ok {
+			return "", 0, errDatabase(errors.New("claim ticket collision"))
+		}
+		return ticket, expiresAt, nil
+	}
+	record := model.BootstrapClaimTicket{
+		TicketHash:   ticketHash,
+		UserID:       userID,
+		DeviceID:     deviceID,
+		RedirectPath: redirectPath,
+		ExpiresAt:    expiresAt,
+	}
+	if err := model.DB.Create(&record).Error; err != nil {
+		return "", 0, errDatabase(err)
+	}
+	return ticket, expiresAt, nil
+}
+
+func ConsumeCCSwitchBootstrapClaimTicket(ticket string) (*CCSwitchBootstrapClaimResult, error) {
+	ticket = strings.TrimSpace(ticket)
+	if ticket == "" {
+		return nil, bootstrapHTTPError(http.StatusUnauthorized, "invalid claim ticket")
+	}
+	now := common.GetTimestamp()
+	ticketHash := ccSwitchBootstrapHash("claim-ticket", ticket)
+	payload, err := consumeCCSwitchBootstrapClaimTicketPayload(ticketHash, now)
+	if err != nil {
+		return nil, err
+	}
+
+	var device model.BootstrapDevice
+	if err := model.DB.First(&device, payload.DeviceID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, bootstrapHTTPError(http.StatusForbidden, "bootstrap device unavailable")
+		}
+		return nil, errDatabase(err)
+	}
+	user, err := validateCCSwitchBootstrapClaimUser(&device)
+	if err != nil {
+		return nil, err
+	}
+	if user.Id != payload.UserID {
+		return nil, bootstrapHTTPError(http.StatusForbidden, "bootstrap user unavailable")
+	}
+	needsProfileSetup := needsCCSwitchBootstrapProfileSetup(user)
+	user.Password = ""
+	return &CCSwitchBootstrapClaimResult{
+		User:              *user,
+		RedirectPath:      normalizeCCSwitchClaimRedirectPath(payload.RedirectPath),
+		NeedsProfileSetup: needsProfileSetup,
+	}, nil
+}
+
+func consumeCCSwitchBootstrapClaimTicketPayload(ticketHash string, now int64) (*ccSwitchBootstrapClaimTicketPayload, error) {
+	if common.RedisEnabled && common.RDB != nil {
+		raw, err := common.RDB.Eval(
+			context.Background(),
+			ccSwitchBootstrapClaimTicketConsumeScript,
+			[]string{ccSwitchBootstrapClaimTicketRedisKey(ticketHash)},
+		).Text()
+		if errors.Is(err, redis.Nil) {
+			return nil, bootstrapHTTPError(http.StatusUnauthorized, "invalid claim ticket")
+		}
+		if err != nil {
+			return nil, errDatabase(err)
+		}
+		var payload ccSwitchBootstrapClaimTicketPayload
+		if err := common.Unmarshal([]byte(raw), &payload); err != nil {
+			return nil, errDatabase(err)
+		}
+		if payload.ExpiresAt <= now {
+			return nil, bootstrapHTTPError(http.StatusUnauthorized, "claim ticket expired")
+		}
+		if payload.UserID <= 0 || payload.DeviceID <= 0 {
+			return nil, bootstrapHTTPError(http.StatusUnauthorized, "invalid claim ticket")
+		}
+		return &payload, nil
+	}
+
+	var record model.BootstrapClaimTicket
+	err := model.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("ticket_hash = ?", ticketHash).First(&record).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return bootstrapHTTPError(http.StatusUnauthorized, "invalid claim ticket")
+			}
+			return errDatabase(err)
+		}
+		if record.ConsumedAt != 0 {
+			return bootstrapHTTPError(http.StatusUnauthorized, "claim ticket already used")
+		}
+		if record.ExpiresAt <= now {
+			return bootstrapHTTPError(http.StatusUnauthorized, "claim ticket expired")
+		}
+		result := tx.Model(&model.BootstrapClaimTicket{}).
+			Where("id = ? AND consumed_at = 0 AND expires_at > ?", record.ID, now).
+			Update("consumed_at", now)
+		if result.Error != nil {
+			return errDatabase(result.Error)
+		}
+		if result.RowsAffected != 1 {
+			return bootstrapHTTPError(http.StatusUnauthorized, "claim ticket already used")
+		}
+		if err := tx.First(&record, record.ID).Error; err != nil {
+			return errDatabase(err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &ccSwitchBootstrapClaimTicketPayload{
+		UserID:       record.UserID,
+		DeviceID:     record.DeviceID,
+		RedirectPath: record.RedirectPath,
+		ExpiresAt:    record.ExpiresAt,
+	}, nil
+}
+
+func buildCCSwitchBootstrapClaimURL(baseURL string, redirectPath string, ticket string) string {
+	values := url.Values{}
+	values.Set("redirect", normalizeCCSwitchClaimRedirectPath(redirectPath))
+	values.Set("ticket", ticket)
+	return strings.TrimRight(baseURL, "/") + "/cc-switch/claim?" + values.Encode()
+}
+
+func normalizeCCSwitchClaimRedirectPath(redirectPath string) string {
+	redirectPath = strings.TrimSpace(redirectPath)
+	if redirectPath == "" || !strings.HasPrefix(redirectPath, "/") || strings.HasPrefix(redirectPath, "//") {
+		return "/console/topup"
+	}
+	if len(redirectPath) > 512 {
+		return "/console/topup"
+	}
+	return redirectPath
+}
+
+func ccSwitchBootstrapClaimTicketRedisKey(ticketHash string) string {
+	return "bootstrap_claim_ticket:" + ticketHash
+}
+
+func needsCCSwitchBootstrapProfileSetup(user *model.User) bool {
+	if user == nil {
+		return true
+	}
+	return strings.HasPrefix(user.Username, "ccs_") || user.Password == ""
 }
 
 func defaultCCSwitchBootstrapModels() map[string]any {
