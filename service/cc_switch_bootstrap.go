@@ -560,6 +560,7 @@ func createCCSwitchBootstrapClaimTicket(ctx context.Context, userID int, deviceI
 	now := common.GetTimestamp()
 	expiresAt := now + ccSwitchBootstrapClaimTicketTTLSeconds
 	ticketHash := ccSwitchBootstrapHash("claim-ticket", ticket)
+	cleanupCCSwitchBootstrapClaimTickets(now)
 	payload := ccSwitchBootstrapClaimTicketPayload{
 		UserID:       userID,
 		DeviceID:     deviceID,
@@ -702,7 +703,7 @@ func buildCCSwitchBootstrapClaimURL(baseURL string, redirectPath string, ticket 
 	values := url.Values{}
 	values.Set("redirect", normalizeCCSwitchClaimRedirectPath(redirectPath))
 	values.Set("ticket", ticket)
-	return strings.TrimRight(baseURL, "/") + "/cc-switch/claim?" + values.Encode()
+	return strings.TrimRight(baseURL, "/") + "/cc-switch/claim#" + values.Encode()
 }
 
 func normalizeCCSwitchClaimRedirectPath(redirectPath string) string {
@@ -713,11 +714,26 @@ func normalizeCCSwitchClaimRedirectPath(redirectPath string) string {
 	if len(redirectPath) > 512 {
 		return "/console/topup"
 	}
+	if redirectPath != "/console/topup" &&
+		!strings.HasPrefix(redirectPath, "/console/topup/") &&
+		!strings.HasPrefix(redirectPath, "/console/topup?") {
+		return "/console/topup"
+	}
 	return redirectPath
 }
 
 func ccSwitchBootstrapClaimTicketRedisKey(ticketHash string) string {
 	return "bootstrap_claim_ticket:" + ticketHash
+}
+
+func cleanupCCSwitchBootstrapClaimTickets(now int64) {
+	if now <= 0 {
+		return
+	}
+	if common.RedisEnabled && common.RDB != nil {
+		return
+	}
+	_ = model.DB.Where("expires_at < ?", now).Delete(&model.BootstrapClaimTicket{}).Error
 }
 
 func needsCCSwitchBootstrapProfileSetup(user *model.User) bool {

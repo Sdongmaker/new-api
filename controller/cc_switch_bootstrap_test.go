@@ -235,7 +235,10 @@ func TestCCSwitchBootstrapClaimLinkAndClaimLogin(t *testing.T) {
 
 	parsed, err := url.Parse(claimLinkResponse.Data.ClaimURL)
 	require.NoError(t, err)
-	ticket := parsed.Query().Get("ticket")
+	require.Empty(t, parsed.RawQuery)
+	fragment, err := url.ParseQuery(parsed.Fragment)
+	require.NoError(t, err)
+	ticket := fragment.Get("ticket")
 	require.NotEmpty(t, ticket)
 
 	claimEngine := newCCSwitchClaimTestEngine()
@@ -275,4 +278,18 @@ func TestCCSwitchBootstrapClaimLinkAndClaimLogin(t *testing.T) {
 
 	replayRecorder := performCCSwitchClaimRequest(t, fmt.Sprintf(`{"ticket":%q}`, ticket))
 	require.Equal(t, http.StatusUnauthorized, replayRecorder.Code)
+}
+
+func TestCCSwitchBootstrapRejectsOversizedBodies(t *testing.T) {
+	setupCCSwitchBootstrapControllerTest(t)
+	oversized := strings.Repeat("a", 20*1024)
+
+	bootstrapRecorder := performCCSwitchBootstrapRequest(t, oversized, map[string]string{})
+	require.Equal(t, http.StatusBadRequest, bootstrapRecorder.Code)
+
+	claimLinkRecorder := performCCSwitchClaimLinkRequest(t, oversized, map[string]string{})
+	require.Equal(t, http.StatusBadRequest, claimLinkRecorder.Code)
+
+	claimRecorder := performCCSwitchClaimRequest(t, oversized)
+	require.Equal(t, http.StatusBadRequest, claimRecorder.Code)
 }

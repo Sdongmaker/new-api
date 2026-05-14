@@ -67,6 +67,7 @@ async function consumeClaimTicket(ticket: string): Promise<ClaimResponse> {
 async function updateClaimedProfile(values: {
   username: string
   password: string
+  userId: number
 }): Promise<{ success: boolean; message?: string }> {
   const res = await api.put(
     '/api/user/self',
@@ -75,7 +76,12 @@ async function updateClaimedProfile(values: {
       display_name: values.username,
       password: values.password,
     },
-    { skipBusinessError: true } as Record<string, unknown>
+    {
+      skipBusinessError: true,
+      headers: {
+        'New-Api-User': String(values.userId),
+      },
+    } as Record<string, unknown>
   )
   return res.data as { success: boolean; message?: string }
 }
@@ -84,11 +90,28 @@ function normalizeRedirectPath(path?: string): string {
   if (!path || !path.startsWith('/') || path.startsWith('//')) {
     return '/console/topup'
   }
+  if (
+    path !== '/console/topup' &&
+    !path.startsWith('/console/topup/') &&
+    !path.startsWith('/console/topup?')
+  ) {
+    return '/console/topup'
+  }
   return path
 }
 
 function rememberClaimedUser(user: AuthUser) {
-  useAuthStore.getState().auth.setUser(user)
+  try {
+    useAuthStore.getState().auth.setUser(user)
+  } catch {
+    useAuthStore.setState((state) => ({
+      ...state,
+      auth: {
+        ...state.auth,
+        user,
+      },
+    }))
+  }
   try {
     window.localStorage.setItem('uid', String(user.id))
   } catch {
@@ -98,6 +121,34 @@ function rememberClaimedUser(user: AuthUser) {
 
 function redirectTo(path: string) {
   window.location.replace(normalizeRedirectPath(path))
+}
+
+function readClaimParams(
+  fallbackTicket: string,
+  fallbackRedirect: string
+): { ticket: string; redirect: string } {
+  if (typeof window === 'undefined') {
+    return { ticket: fallbackTicket, redirect: fallbackRedirect }
+  }
+
+  const fragment = window.location.hash.startsWith('#')
+    ? window.location.hash.slice(1)
+    : ''
+  if (fragment) {
+    const params = new URLSearchParams(fragment)
+    const ticket = (params.get('ticket') || '').trim()
+    if (ticket) {
+      return {
+        ticket,
+        redirect: normalizeRedirectPath(params.get('redirect') || fallbackRedirect),
+      }
+    }
+  }
+
+  return {
+    ticket: fallbackTicket,
+    redirect: fallbackRedirect,
+  }
 }
 
 function getErrorMessage(err: unknown): string | undefined {
@@ -140,20 +191,27 @@ function CCSwitchClaimPage() {
     consumedRef.current = true
 
     async function runClaim() {
-      if (!ticket) {
+      const { ticket: claimTicket, redirect: claimRedirect } = readClaimParams(
+        ticket,
+        fallbackRedirect
+      )
+      if (!claimTicket) {
         setError(t('Claim link is missing a ticket.'))
         setLoading(false)
         return
       }
+      if (typeof window !== 'undefined') {
+        window.history.replaceState(null, '', window.location.pathname)
+      }
       try {
-        const response = await consumeClaimTicket(ticket)
+        const response = await consumeClaimTicket(claimTicket)
         if (!response.success || !response.data?.user) {
           setError(response.message || t('Claim link is invalid or expired.'))
           setLoading(false)
           return
         }
         const nextRedirect = normalizeRedirectPath(
-          response.data.redirect_path || fallbackRedirect
+          response.data.redirect_path || claimRedirect
         )
         rememberClaimedUser(response.data.user)
         setClaimedUser(response.data.user)
@@ -197,12 +255,17 @@ function CCSwitchClaimPage() {
       toast.error(t("Passwords don't match."))
       return
     }
+    if (!claimedUser) {
+      toast.error(t('Failed to update profile'))
+      return
+    }
 
     setSubmitting(true)
     try {
       const response = await updateClaimedProfile({
         username,
         password: form.password,
+        userId: claimedUser.id,
       })
       if (!response.success) {
         toast.error(response.message || t('Failed to update profile'))

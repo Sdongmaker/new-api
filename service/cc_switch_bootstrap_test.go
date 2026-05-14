@@ -142,12 +142,16 @@ func TestCCSwitchBootstrapClaimLinkCreatesConsumableTicket(t *testing.T) {
 		UserAgent: "cc-switch-test",
 	})
 	require.NoError(t, err)
-	require.Equal(t, "https://api.example.com/cc-switch/claim?redirect=%2Fconsole%2Ftopup%3Fshow_history%3Dtrue", result.ClaimURL[:strings.Index(result.ClaimURL, "&ticket=")])
 	require.Greater(t, result.ExpiresAt, common.GetTimestamp())
 
 	parsed, err := url.Parse(result.ClaimURL)
 	require.NoError(t, err)
-	ticket := parsed.Query().Get("ticket")
+	require.Empty(t, parsed.RawQuery)
+	require.NotEmpty(t, parsed.Fragment)
+	fragment, err := url.ParseQuery(parsed.Fragment)
+	require.NoError(t, err)
+	require.Equal(t, "/console/topup?show_history=true", fragment.Get("redirect"))
+	ticket := fragment.Get("ticket")
 	require.NotEmpty(t, ticket)
 
 	var stored model.BootstrapClaimTicket
@@ -164,6 +168,47 @@ func TestCCSwitchBootstrapClaimLinkCreatesConsumableTicket(t *testing.T) {
 
 	_, err = ConsumeCCSwitchBootstrapClaimTicket(ticket)
 	requireBootstrapStatus(t, err, http.StatusUnauthorized)
+}
+
+func TestCCSwitchBootstrapClaimRedirectPathAllowsOnlyTopUp(t *testing.T) {
+	require.Equal(t, "/console/topup", normalizeCCSwitchClaimRedirectPath(""))
+	require.Equal(t, "/console/topup", normalizeCCSwitchClaimRedirectPath("/logout"))
+	require.Equal(t, "/console/topup", normalizeCCSwitchClaimRedirectPath("/api/user/logout"))
+	require.Equal(t, "/console/topup", normalizeCCSwitchClaimRedirectPath("//evil.example/console/topup"))
+	require.Equal(t, "/console/topup", normalizeCCSwitchClaimRedirectPath("https://evil.example/console/topup"))
+	require.Equal(t, "/console/topup?show_history=true", normalizeCCSwitchClaimRedirectPath("/console/topup?show_history=true"))
+}
+
+func TestCCSwitchBootstrapClaimTicketCleanupRemovesExpiredDBTickets(t *testing.T) {
+	db := setupCCSwitchBootstrapServiceTest(t)
+	now := common.GetTimestamp()
+	expired := model.BootstrapClaimTicket{
+		TicketHash:   ccSwitchBootstrapHash("claim-ticket", "expired-cleanup-ticket"),
+		UserID:       1,
+		DeviceID:     1,
+		RedirectPath: "/console/topup",
+		ExpiresAt:    now - 1,
+	}
+	active := model.BootstrapClaimTicket{
+		TicketHash:   ccSwitchBootstrapHash("claim-ticket", "active-cleanup-ticket"),
+		UserID:       1,
+		DeviceID:     1,
+		RedirectPath: "/console/topup",
+		ExpiresAt:    now + 60,
+	}
+	require.NoError(t, db.Create(&expired).Error)
+	require.NoError(t, db.Create(&active).Error)
+
+	_, _, err := createCCSwitchBootstrapClaimTicket(context.Background(), 1, 1, "/console/topup")
+	require.NoError(t, err)
+
+	var expiredCount int64
+	require.NoError(t, db.Model(&model.BootstrapClaimTicket{}).Where("ticket_hash = ?", expired.TicketHash).Count(&expiredCount).Error)
+	require.Zero(t, expiredCount)
+
+	var activeCount int64
+	require.NoError(t, db.Model(&model.BootstrapClaimTicket{}).Where("ticket_hash = ?", active.TicketHash).Count(&activeCount).Error)
+	require.Equal(t, int64(1), activeCount)
 }
 
 func TestCCSwitchBootstrapClaimLinkRejectsUnavailableDeviceOrUser(t *testing.T) {
@@ -262,8 +307,10 @@ func TestCCSwitchBootstrapClaimTicketDetectsCompletedProfile(t *testing.T) {
 	require.NoError(t, err)
 	parsed, err := url.Parse(result.ClaimURL)
 	require.NoError(t, err)
+	fragment, err := url.ParseQuery(parsed.Fragment)
+	require.NoError(t, err)
 
-	claim, err := ConsumeCCSwitchBootstrapClaimTicket(parsed.Query().Get("ticket"))
+	claim, err := ConsumeCCSwitchBootstrapClaimTicket(fragment.Get("ticket"))
 	require.NoError(t, err)
 	require.False(t, claim.NeedsProfileSetup)
 	require.Empty(t, claim.User.Password)

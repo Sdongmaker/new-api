@@ -10,7 +10,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const ccSwitchBootstrapMaxBodyBytes = 16 * 1024
+
 func CCSwitchBootstrap(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, ccSwitchBootstrapMaxBodyBytes)
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -52,6 +55,7 @@ func CCSwitchBootstrap(c *gin.Context) {
 }
 
 func CCSwitchBootstrapClaimLink(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, ccSwitchBootstrapMaxBodyBytes)
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -89,6 +93,7 @@ type ccSwitchBootstrapClaimRequest struct {
 }
 
 func CCSwitchBootstrapClaim(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, ccSwitchBootstrapMaxBodyBytes)
 	var req ccSwitchBootstrapClaimRequest
 	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{

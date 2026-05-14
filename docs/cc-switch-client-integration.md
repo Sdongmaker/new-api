@@ -486,7 +486,7 @@ X-CCS-Signature: <hex_hmac_sha256>
 }
 ```
 
-`redirect_path` 可选，默认 `/console/topup`。只允许站内路径，建议客户端固定传 `/console/topup`。
+`redirect_path` 可选，默认 `/console/topup`。服务端只接受充值页路径（如 `/console/topup` 或 `/console/topup?show_history=true`），建议客户端固定传 `/console/topup`。
 
 ### 6.2 claim-link 签名
 
@@ -511,7 +511,7 @@ POST
   "success": true,
   "message": "",
   "data": {
-    "claim_url": "https://api.example.com/cc-switch/claim?redirect=%2Fconsole%2Ftopup&ticket=xxxxxxxx",
+    "claim_url": "https://api.example.com/cc-switch/claim#redirect=%2Fconsole%2Ftopup&ticket=xxxxxxxx",
     "expires_at": 1760000000
   }
 }
@@ -521,7 +521,7 @@ POST
 
 | 字段 | 说明 |
 | --- | --- |
-| `claim_url` | 一次性认领链接，客户端直接用系统浏览器打开 |
+| `claim_url` | 一次性认领链接，客户端直接用系统浏览器打开。`ticket` 位于 URL fragment 中，浏览器不会把 fragment 发送给服务端 |
 | `expires_at` | Unix 秒级过期时间，默认约 10 分钟后过期 |
 
 ### 6.4 客户端行为
@@ -553,6 +553,7 @@ POST
 ### 6.6 安全注意事项
 
 - `claim_url` 内的 `ticket` 是一次性凭证，默认 10 分钟过期，消费后立即失效
+- 服务端将 `ticket` 放在 URL fragment（`#ticket=...`）中，网站页面读取后会立即清理地址栏，减少浏览器历史、Referer 和日志泄露风险
 - 客户端不要将 `ticket` 或完整 `claim_url` 写入日志、崩溃上报、埋点或剪贴板
 - 不要通过第三方页面中转 `claim_url`，避免 ticket 泄露到 Referer、访问日志或统计系统
 - 每次申请 claim-link 都必须使用新的 nonce，不能复用普通 bootstrap 的 nonce
