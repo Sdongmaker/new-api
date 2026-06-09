@@ -149,16 +149,16 @@ const Home = () => {
   }, [endpointItems.length]);
 
   return (
-    <div className='w-full overflow-x-hidden'>
+    <div className='classic-page-fill classic-home-page w-full overflow-x-hidden'>
       <NoticeModal
         visible={noticeVisible}
         onClose={() => setNoticeVisible(false)}
         isMobile={isMobile}
       />
       {homePageContentLoaded && homePageContent === '' ? (
-        <div className='w-full overflow-x-hidden'>
+        <div className='classic-home-default w-full overflow-x-hidden'>
           {/* Banner 部分 */}
-          <div className='w-full border-b border-semi-color-border min-h-[500px] md:min-h-[600px] lg:min-h-[700px] relative overflow-x-hidden'>
+          <div className='classic-home-hero w-full border-b border-semi-color-border relative overflow-x-hidden'>
             {/* 背景模糊晕染球 */}
             <div className='blur-ball blur-ball-skyblue' />
             <div className='blur-ball blur-ball-pink' />
@@ -331,11 +331,11 @@ const Home = () => {
           </div>
         </div>
       ) : (
-        <div className='overflow-x-hidden w-full'>
+        <div className='classic-page-fill overflow-x-hidden w-full'>
           {homePageContent.startsWith('https://') ? (
             <iframe
               src={homePageContent}
-              className='w-full h-screen border-none'
+              className='w-full h-full border-none'
             />
           ) : (
             <div
