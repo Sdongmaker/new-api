@@ -41,6 +41,14 @@ func (l *InMemoryRateLimiter) clearExpiredItems() {
 	}
 }
 
+func (l *InMemoryRateLimiter) Reset() {
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
+	if l.store != nil {
+		l.store = make(map[string]*[]int64)
+	}
+}
+
 // Request parameter duration's unit is seconds
 func (l *InMemoryRateLimiter) Request(key string, maxRequestNum int, duration int64) bool {
 	l.mutex.Lock()

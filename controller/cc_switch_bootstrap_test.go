@@ -59,16 +59,13 @@ func setupCCSwitchBootstrapControllerTest(t *testing.T) *gorm.DB {
 	gin.SetMode(gin.TestMode)
 	originalDB := model.DB
 	originalLOGDB := model.LOG_DB
-	originalUsingSQLite := common.UsingSQLite
-	originalUsingMySQL := common.UsingMySQL
-	originalUsingPostgreSQL := common.UsingPostgreSQL
+	originalMainDatabaseType := common.MainDatabaseType()
+	originalLogDatabaseType := common.LogDatabaseType()
 	originalRedisEnabled := common.RedisEnabled
 	originalRegisterEnabled := common.RegisterEnabled
 	originalQuotaForNewUser := common.QuotaForNewUser
 
-	common.UsingSQLite = true
-	common.UsingMySQL = false
-	common.UsingPostgreSQL = false
+	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
 	common.RedisEnabled = false
 	common.RegisterEnabled = false
 	common.QuotaForNewUser = 12345
@@ -94,9 +91,7 @@ func setupCCSwitchBootstrapControllerTest(t *testing.T) *gorm.DB {
 		}
 		model.DB = originalDB
 		model.LOG_DB = originalLOGDB
-		common.UsingSQLite = originalUsingSQLite
-		common.UsingMySQL = originalUsingMySQL
-		common.UsingPostgreSQL = originalUsingPostgreSQL
+		common.SetDatabaseTypes(originalMainDatabaseType, originalLogDatabaseType)
 		common.RedisEnabled = originalRedisEnabled
 		common.RegisterEnabled = originalRegisterEnabled
 		common.QuotaForNewUser = originalQuotaForNewUser
