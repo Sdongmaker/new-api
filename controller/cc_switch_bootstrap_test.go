@@ -271,6 +271,25 @@ func TestCCSwitchBootstrapClaimLinkAndClaimLogin(t *testing.T) {
 	require.Equal(t, "claimed-user", updatedUser.Username)
 	require.True(t, common.ValidatePasswordAndHash("claimed-pass", updatedUser.Password))
 
+	require.NotEmpty(t, profileRecorder.Result().Cookies())
+	secondPasswordRecorder := httptest.NewRecorder()
+	secondPasswordRequest := httptest.NewRequest(http.MethodPut, "/api/user/self", strings.NewReader(`{"username":"claimed-user","display_name":"claimed-user","password":"second-pass"}`))
+	secondPasswordRequest.Header.Set("Content-Type", "application/json")
+	secondPasswordRequest.Header.Set("New-Api-User", fmt.Sprintf("%d", claimResponse.Data.User.Id))
+	for _, responseCookie := range profileRecorder.Result().Cookies() {
+		secondPasswordRequest.AddCookie(responseCookie)
+	}
+	claimEngine.ServeHTTP(secondPasswordRecorder, secondPasswordRequest)
+	require.Equal(t, http.StatusOK, secondPasswordRecorder.Code)
+
+	var secondPasswordResponse struct {
+		Success bool `json:"success"`
+	}
+	require.NoError(t, common.Unmarshal(secondPasswordRecorder.Body.Bytes(), &secondPasswordResponse))
+	require.False(t, secondPasswordResponse.Success)
+	require.NoError(t, db.First(&updatedUser, claimResponse.Data.User.Id).Error)
+	require.True(t, common.ValidatePasswordAndHash("claimed-pass", updatedUser.Password))
+
 	replayRecorder := performCCSwitchClaimRequest(t, fmt.Sprintf(`{"ticket":%q}`, ticket))
 	require.Equal(t, http.StatusUnauthorized, replayRecorder.Code)
 }

@@ -7,10 +7,14 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 )
 
-const ccSwitchBootstrapMaxBodyBytes = 16 * 1024
+const (
+	ccSwitchBootstrapMaxBodyBytes        = 16 * 1024
+	ccSwitchProfileSetupSessionUserIDKey = "cc_switch_profile_setup_user_id"
+)
 
 func CCSwitchBootstrap(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, ccSwitchBootstrapMaxBodyBytes)
@@ -106,6 +110,9 @@ func CCSwitchBootstrapClaim(c *gin.Context) {
 	if err != nil {
 		writeCCSwitchBootstrapError(c, err)
 		return
+	}
+	if result.NeedsProfileSetup {
+		sessions.Default(c).Set(ccSwitchProfileSetupSessionUserIDKey, result.User.Id)
 	}
 	if err := setupLoginSession(&result.User, c); err != nil {
 		common.ApiError(c, err)
