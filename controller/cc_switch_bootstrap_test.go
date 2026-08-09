@@ -16,10 +16,9 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/gin-contrib/sessions"
-	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -40,6 +39,12 @@ type ccSwitchBootstrapClaimAPIResponse struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
 	Data    struct {
+		AccessToken     string `json:"access_token"`
+		TokenType       string `json:"token_type"`
+		AccessExpiresAt int64  `json:"access_expires_at"`
+		Session         struct {
+			SID string `json:"sid"`
+		} `json:"session"`
 		User struct {
 			Id       int    `json:"id"`
 			Username string `json:"username"`
@@ -49,6 +54,7 @@ type ccSwitchBootstrapClaimAPIResponse struct {
 		} `json:"user"`
 		RedirectPath      string `json:"redirect_path"`
 		NeedsProfileSetup bool   `json:"needs_profile_setup"`
+		ProfileSetupToken string `json:"profile_setup_token"`
 	} `json:"data"`
 }
 
@@ -64,18 +70,20 @@ func setupCCSwitchBootstrapControllerTest(t *testing.T) *gorm.DB {
 	originalRedisEnabled := common.RedisEnabled
 	originalRegisterEnabled := common.RegisterEnabled
 	originalQuotaForNewUser := common.QuotaForNewUser
+	originalSessionSecret := common.SessionSecret
 
 	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
 	common.RedisEnabled = false
 	common.RegisterEnabled = false
 	common.QuotaForNewUser = 12345
+	common.SessionSecret = "cc-switch-bootstrap-test-session-secret"
 
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	model.DB = db
 	model.LOG_DB = db
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Log{}, &model.BootstrapDevice{}, &model.BootstrapClaimTicket{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Log{}, &model.BootstrapDevice{}, &model.BootstrapClaimTicket{}, &model.UserSession{}, &model.AuthFlow{}))
 
 	setCCSwitchBootstrapControllerTestEnv(t, map[string]string{
 		"CC_SWITCH_BOOTSTRAP_ENABLED":           "true",
@@ -95,6 +103,7 @@ func setupCCSwitchBootstrapControllerTest(t *testing.T) *gorm.DB {
 		common.RedisEnabled = originalRedisEnabled
 		common.RegisterEnabled = originalRegisterEnabled
 		common.QuotaForNewUser = originalQuotaForNewUser
+		common.SessionSecret = originalSessionSecret
 	})
 
 	return db
@@ -161,8 +170,6 @@ func performCCSwitchClaimRequest(t *testing.T, body string) *httptest.ResponseRe
 
 func newCCSwitchClaimTestEngine() *gin.Engine {
 	engine := gin.New()
-	store := cookie.NewStore([]byte("test-session-secret"))
-	engine.Use(sessions.Sessions("session", store))
 	engine.POST("/api/bootstrap/cc-switch/claim", CCSwitchBootstrapClaim)
 	selfRoute := engine.Group("/api/user")
 	selfRoute.Use(middleware.UserAuth())
@@ -247,38 +254,47 @@ func TestCCSwitchBootstrapClaimLinkAndClaimLogin(t *testing.T) {
 	require.Equal(t, "/console/topup", claimResponse.Data.RedirectPath)
 	require.True(t, strings.HasPrefix(claimResponse.Data.User.Username, "ccs_"))
 	require.NotContains(t, claimRecorder.Body.String(), "password")
-	require.NotEmpty(t, claimRecorder.Result().Cookies())
+	assert.NotEmpty(t, claimResponse.Data.AccessToken)
+	assert.NotEmpty(t, claimResponse.Data.Session.SID)
+	assert.NotEmpty(t, claimResponse.Data.ProfileSetupToken)
+	assert.NotEmpty(t, claimRecorder.Result().Cookies())
 
+	profileBody := fmt.Sprintf(`{"username":"claimed-user","display_name":"claimed-user","password":"claimed-pass","profile_setup_token":%q}`, claimResponse.Data.ProfileSetupToken)
 	profileRecorder := httptest.NewRecorder()
-	profileRequest := httptest.NewRequest(http.MethodPut, "/api/user/self", strings.NewReader(`{"username":"claimed-user","display_name":"claimed-user","password":"claimed-pass"}`))
+	profileRequest := httptest.NewRequest(http.MethodPut, "/api/user/self", strings.NewReader(profileBody))
 	profileRequest.Header.Set("Content-Type", "application/json")
-	profileRequest.Header.Set("New-Api-User", fmt.Sprintf("%d", claimResponse.Data.User.Id))
-	for _, responseCookie := range claimRecorder.Result().Cookies() {
-		profileRequest.AddCookie(responseCookie)
-	}
+	profileRequest.Header.Set("Authorization", "Bearer "+claimResponse.Data.AccessToken)
 	claimEngine.ServeHTTP(profileRecorder, profileRequest)
 	require.Equal(t, http.StatusOK, profileRecorder.Code)
 
 	var profileResponse struct {
-		Success bool   `json:"success"`
-		Message string `json:"message"`
+		Success bool `json:"success"`
+		Data    struct {
+			AccessToken string `json:"access_token"`
+		} `json:"data"`
 	}
 	require.NoError(t, common.Unmarshal(profileRecorder.Body.Bytes(), &profileResponse))
 	require.True(t, profileResponse.Success)
+	assert.NotEmpty(t, profileResponse.Data.AccessToken)
 
 	var updatedUser model.User
 	require.NoError(t, db.First(&updatedUser, claimResponse.Data.User.Id).Error)
-	require.Equal(t, "claimed-user", updatedUser.Username)
+	assert.Equal(t, "claimed-user", updatedUser.Username)
 	require.True(t, common.ValidatePasswordAndHash("claimed-pass", updatedUser.Password))
 
-	require.NotEmpty(t, profileRecorder.Result().Cookies())
+	// 设置过初始密码后，即使再签发一个全新的 profile_setup_token 也不能绕过
+	// 原密码校验：绕过只对“尚未设置密码”的匿名用户生效。
+	freshSetupToken, _, err := model.CreateAuthFlow(model.AuthFlowCreate{
+		Purpose:   model.AuthFlowPurposeCCSwitchProfileSetup,
+		UserId:    claimResponse.Data.User.Id,
+		ExpiresAt: time.Now().Add(10 * time.Minute),
+	})
+	require.NoError(t, err)
 	secondPasswordRecorder := httptest.NewRecorder()
-	secondPasswordRequest := httptest.NewRequest(http.MethodPut, "/api/user/self", strings.NewReader(`{"username":"claimed-user","display_name":"claimed-user","password":"second-pass"}`))
+	secondPasswordBody := fmt.Sprintf(`{"username":"claimed-user","display_name":"claimed-user","password":"second-pass","profile_setup_token":%q}`, freshSetupToken)
+	secondPasswordRequest := httptest.NewRequest(http.MethodPut, "/api/user/self", strings.NewReader(secondPasswordBody))
 	secondPasswordRequest.Header.Set("Content-Type", "application/json")
-	secondPasswordRequest.Header.Set("New-Api-User", fmt.Sprintf("%d", claimResponse.Data.User.Id))
-	for _, responseCookie := range profileRecorder.Result().Cookies() {
-		secondPasswordRequest.AddCookie(responseCookie)
-	}
+	secondPasswordRequest.Header.Set("Authorization", "Bearer "+profileResponse.Data.AccessToken)
 	claimEngine.ServeHTTP(secondPasswordRecorder, secondPasswordRequest)
 	require.Equal(t, http.StatusOK, secondPasswordRecorder.Code)
 
@@ -288,7 +304,7 @@ func TestCCSwitchBootstrapClaimLinkAndClaimLogin(t *testing.T) {
 	require.NoError(t, common.Unmarshal(secondPasswordRecorder.Body.Bytes(), &secondPasswordResponse))
 	require.False(t, secondPasswordResponse.Success)
 	require.NoError(t, db.First(&updatedUser, claimResponse.Data.User.Id).Error)
-	require.True(t, common.ValidatePasswordAndHash("claimed-pass", updatedUser.Password))
+	assert.True(t, common.ValidatePasswordAndHash("claimed-pass", updatedUser.Password))
 
 	replayRecorder := performCCSwitchClaimRequest(t, fmt.Sprintf(`{"ticket":%q}`, ticket))
 	require.Equal(t, http.StatusUnauthorized, replayRecorder.Code)

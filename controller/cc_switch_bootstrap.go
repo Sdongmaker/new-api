@@ -4,16 +4,16 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 )
 
 const (
-	ccSwitchBootstrapMaxBodyBytes        = 16 * 1024
-	ccSwitchProfileSetupSessionUserIDKey = "cc_switch_profile_setup_user_id"
+	ccSwitchBootstrapMaxBodyBytes = 16 * 1024
 )
 
 func CCSwitchBootstrap(c *gin.Context) {
@@ -111,17 +111,44 @@ func CCSwitchBootstrapClaim(c *gin.Context) {
 		writeCCSwitchBootstrapError(c, err)
 		return
 	}
+	// 匿名用户认领后需要设置用户名/密码。签发一次性 profile_setup_token，
+	// 允许 UpdateSelf 在无原始密码的情况下设置初始密码（用完即焚）。
+	profileSetupToken := ""
 	if result.NeedsProfileSetup {
-		sessions.Default(c).Set(ccSwitchProfileSetupSessionUserIDKey, result.User.Id)
+		expiresAt := time.Now().Add(10 * time.Minute)
+		flowToken, _, flowErr := model.CreateAuthFlow(model.AuthFlowCreate{
+			Purpose:   model.AuthFlowPurposeCCSwitchProfileSetup,
+			UserId:    result.User.Id,
+			ExpiresAt: expiresAt,
+		})
+		if flowErr != nil {
+			common.ApiError(c, flowErr)
+			return
+		}
+		profileSetupToken = flowToken
 	}
-	if err := setupLoginSession(&result.User, c); err != nil {
-		common.ApiError(c, err)
+	bundle, err := service.CreateLoginSession(
+		result.User.Id,
+		loginMethodFromContext(c),
+		c.ClientIP(),
+		c.Request.UserAgent(),
+	)
+	if err != nil {
+		writeAuthSessionError(c, err)
 		return
 	}
+	model.UpdateUserLastLoginAt(result.User.Id)
+	service.WriteRefreshCookie(c, bundle.RefreshToken)
+	setAuthNoStore(c)
+	recordLoginAudit(&result.User, c)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
 		"data": gin.H{
+			"access_token":      bundle.AccessToken,
+			"token_type":        bundle.TokenType,
+			"access_expires_at": bundle.AccessExpiresAt,
+			"session":           bundle.Session,
 			"user": gin.H{
 				"id":           result.User.Id,
 				"username":     result.User.Username,
@@ -132,6 +159,7 @@ func CCSwitchBootstrapClaim(c *gin.Context) {
 			},
 			"redirect_path":       result.RedirectPath,
 			"needs_profile_setup": result.NeedsProfileSetup,
+			"profile_setup_token": profileSetupToken,
 		},
 	})
 }
