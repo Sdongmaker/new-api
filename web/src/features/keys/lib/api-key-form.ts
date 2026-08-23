@@ -21,7 +21,7 @@ import { z } from 'zod'
 
 import { parseQuotaFromDollars, quotaUnitsToDollars } from '@/lib/format'
 
-import { DEFAULT_GROUP } from '../constants'
+import { DEFAULT_GROUP, MAX_API_KEY_QUOTA } from '../constants'
 import type { ApiKey, ApiKeyFormData } from '../types'
 
 // ============================================================================
@@ -92,6 +92,17 @@ export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
           code: 'custom',
           path: ['remain_quota_dollars'],
           message: t('Quota must be zero or greater'),
+        })
+        return
+      }
+
+      if (
+        parseQuotaFromDollars(data.remain_quota_dollars) > MAX_API_KEY_QUOTA
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['remain_quota_dollars'],
+          message: t('Quota exceeds the maximum allowed amount'),
         })
       }
     })
